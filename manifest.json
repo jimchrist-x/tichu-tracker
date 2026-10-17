@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Tichu Tracker",
+  "version": "1.4.1",
+  "description": "A tichu card tracker meant for www.dod.gr",
+  "icons": {
+    "16": "icons/logo-16.png",
+    "32": "icons/logo-32.png",
+    "48": "icons/logo-48.png",
+    "96": "icons/logo-96.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/logo-16.png",
+      "32": "icons/logo-32.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.dod.gr/*"
+      ],
+      "css": [
+        "tracker.css"
+      ],
+      "js": [
+        "tracker.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "tichu-tracker@dod.local",
+      "strict_min_version": "109.0"
+    }
+  }
+}
