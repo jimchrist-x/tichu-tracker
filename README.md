@@ -1,4 +1,4 @@
-# DoD Tichu Tracker
+# DoD Games tichu tracker
 
 A browser content script that adds a live Tichu card-tracking and strategy panel to the game board on [www.dod.gr](https://www.dod.gr/). It tracks information visible in the page, estimates the distribution of unseen cards, and offers heuristic suggestions while you play.
 
