@@ -1,0 +1,19 @@
+{
+  "name": "tichu-tracker",
+  "version": "1.5.0",
+  "private": true,
+  "description": "Browser content script that adds a live Tichu card tracker and heuristic advisor to www.dod.gr",
+  "keywords": [
+    "tichu",
+    "dod",
+    "browser-extension",
+    "content-script"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}

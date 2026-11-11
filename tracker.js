@@ -49,6 +49,12 @@
   const ME_DEF = { key: "ME", label: "You", holderId: "nickholder_bottom", cardsId: "cardsHolderBottom" };
   const PLAYER_BY_KEY = new Map([...PLAYER_DEFS, ME_DEF].map(player => [player.key, player]));
 
+  // Version shown in the HUD header. `chrome.runtime.getManifest()` is preferred
+  // at runtime so a stale constant can never mask a reloaded extension.
+  const VERSION = "1.5.0";
+  const LAYOUT_STORAGE_KEY = "tichu-tracker.layout.v1";
+  const FLASH_STATUS_MS = 2600;
+
   const state = {
     currentRoundText: "",
     inHand: new Set(),
@@ -56,7 +62,9 @@
     tradedOut: new Map(),         // historical outgoing trade: card key -> L / P / R
     tradedIn: new Set(),          // incoming card identities observed after the exchange
     pendingTrades: new Map(),     // card key -> L / P / R, provisional selection only
-    played: new Set(),            // public-play evidence only
+    played: new Set(),            // public-play evidence plus explicit manual marks
+    manualPlayed: new Set(),      // cards the player marked by hand when DoD's DOM missed a play
+    manualHistory: [],            // reversible log of manual marks: { card, action }
     unresolved: new Map(),        // temporarily absent from my hand, not yet proven played/traded
     preTradeHand: new Set(),      // last observed hand before the trade phase
     unmappedSpecials: new Set(),
@@ -66,7 +74,7 @@
     lastPlayActor: null,
     lastTableCards: [],
     lastNonPhoenixSingleRank: null,
-    tichuCalls: new Set(), // observed declaration calls; absence is not proof of no call
+    tichuCalls: new Map(), // seat -> "tichu" | "grand"; absence is not proof of no call
     ignoreBoardForScan: false,
     comboCacheSignature: "",
     comboCache: [],
@@ -78,6 +86,13 @@
     fallbackScanTimer: null,
     bootTimer: null,
     clickListenerAttached: false,
+    keyListenerAttached: false,
+    viewportListenerAttached: false,
+    minimized: false,
+    layout: null,
+    resizeObserver: null,
+    flashStatus: null,
+    flashTimer: null,
     probabilityCacheSignature: "",
     probabilityCacheWorlds: null,
     probabilityCacheSamples: 24,
@@ -103,7 +118,13 @@
     dragonDetails: null,
     probabilityRows: null,
     probabilityNote: null,
-    statusLabel: null
+    statusLabel: null,
+    callsLabel: null,
+    unseenCells: new Map(),
+    minBtn: null,
+    undoBtn: null,
+    copyBtn: null,
+    versionLabel: null
   };
 
   function isStandardCard(code) {
@@ -155,6 +176,8 @@
     state.tradedIn.clear();
     state.pendingTrades.clear();
     state.played.clear();
+    state.manualPlayed.clear();
+    state.manualHistory = [];
     state.unresolved.clear();
     state.preTradeHand.clear();
     state.unmappedSpecials.clear();
@@ -169,6 +192,11 @@
     state.comboCache = [];
     state.tradingActive = null;
     state.forceCommitTrades = false;
+    state.flashStatus = null;
+    if (state.flashTimer !== null) {
+      window.clearTimeout(state.flashTimer);
+      state.flashTimer = null;
+    }
     state.probabilityCacheSignature = "";
     state.probabilityCacheWorlds = null;
     state.probabilityEstimateCacheSignature = "";
@@ -180,6 +208,238 @@
     scheduleScan();
   }
 
+  function extensionVersion() {
+    try {
+      if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) {
+        const manifest = chrome.runtime.getManifest();
+        if (manifest && manifest.version) return manifest.version;
+      }
+    } catch (_) { /* not available outside Chromium extension pages */ }
+    return VERSION;
+  }
+
+  function wireManualCardCell(cell, cardCode) {
+    cell.tabIndex = 0;
+    cell.setAttribute("role", "button");
+    cell.dataset.card = cardCode;
+    cell.addEventListener("click", () => toggleManualPlayed(cardCode));
+    cell.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+      event.preventDefault();
+      toggleManualPlayed(cardCode);
+    });
+  }
+
+  function loadStoredLayout() {
+    try {
+      const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function saveLayout(patch) {
+    state.layout = { ...(state.layout || {}), ...patch };
+    try {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(state.layout));
+    } catch (_) { /* storage can be blocked by privacy settings */ }
+  }
+
+  function applyStoredLayout(root) {
+    if (state.layout === null) state.layout = loadStoredLayout() || {};
+    const layout = state.layout || {};
+    if (Number.isFinite(layout.left) && Number.isFinite(layout.top)) {
+      // Restoring a saved position switches the panel from right- to left-anchored.
+      root.style.right = "auto";
+      root.style.left = `${Math.max(0, Math.min(layout.left, Math.max(0, window.innerWidth - 120)))}px`;
+      root.style.top = `${Math.max(0, Math.min(layout.top, Math.max(0, window.innerHeight - 80)))}px`;
+    }
+    if (Number.isFinite(layout.width) && layout.width >= 260) {
+      root.style.width = `${Math.min(layout.width, window.innerWidth)}px`;
+    }
+    if (Number.isFinite(layout.height) && layout.height >= 120) {
+      root.style.height = `${Math.min(layout.height, window.innerHeight)}px`;
+    }
+  }
+
+  function clampToViewport(root) {
+    if (!root || !root.style) return;
+    if (!root.style.left || root.style.left === "auto") return;
+    const rect = root.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const maxLeft = Math.max(0, window.innerWidth - Math.min(rect.width, window.innerWidth));
+    const maxTop = Math.max(0, window.innerHeight - Math.min(rect.height, window.innerHeight));
+    const left = Math.min(maxLeft, Math.max(0, rect.left));
+    const top = Math.min(maxTop, Math.max(0, rect.top));
+    if (Math.round(left) !== Math.round(rect.left)) root.style.left = `${left}px`;
+    if (Math.round(top) !== Math.round(rect.top)) root.style.top = `${top}px`;
+  }
+
+  function observeHudSize(root) {
+    if (typeof ResizeObserver !== "function" || !root) return;
+    if (state.resizeObserver) state.resizeObserver.disconnect();
+    let timer = null;
+    const observer = new ResizeObserver(() => {
+      if (state.minimized) return;
+      if (timer !== null) window.clearTimeout(timer);
+      // CSS `resize: both` fires this continuously while dragging the handle.
+      timer = window.setTimeout(() => {
+        timer = null;
+        if (!hudElements.root || !hudElements.root.isConnected || state.minimized) return;
+        const root = hudElements.root;
+        // Only an explicit user resize sets an inline size. Auto height changes
+        // whenever the advice text grows, and persisting that would freeze the
+        // panel at whatever height the content happened to have.
+        if (!root.style.width && !root.style.height) return;
+        saveLayout({
+          width: Math.round(root.offsetWidth),
+          height: Math.round(root.offsetHeight)
+        });
+      }, 300);
+    });
+    observer.observe(root);
+    state.resizeObserver = observer;
+  }
+
+  function setMinimized(minimized, persist = true) {
+    state.minimized = Boolean(minimized);
+    if (hudElements.body) hudElements.body.style.display = state.minimized ? "none" : "";
+    if (hudElements.minBtn) {
+      hudElements.minBtn.textContent = state.minimized ? "+" : "—";
+      hudElements.minBtn.title = state.minimized
+        ? "Restore panel (Alt+Shift+T)"
+        : "Minimize panel (Alt+Shift+T)";
+      hudElements.minBtn.setAttribute("aria-expanded", String(!state.minimized));
+    }
+    if (persist) saveLayout({ minimized: state.minimized });
+  }
+
+  function updateUndoButton() {
+    if (!hudElements.undoBtn) return;
+    const pending = state.manualHistory.length;
+    hudElements.undoBtn.disabled = pending === 0;
+    hudElements.undoBtn.title = pending
+      ? `Undo the last manual card mark (${pending} reversible)`
+      : "No manual card marks to undo";
+  }
+
+  function invalidateDerivedCaches() {
+    state.comboCacheSignature = "";
+    state.comboCache = [];
+    state.probabilityCacheSignature = "";
+    state.probabilityCacheWorlds = null;
+    state.probabilityEstimateCacheSignature = "";
+    state.probabilityEstimateCache.clear();
+  }
+
+  function flashStatus(text, tone = "ok") {
+    state.flashStatus = { text, tone, until: Date.now() + FLASH_STATUS_MS };
+    if (state.flashTimer !== null) window.clearTimeout(state.flashTimer);
+    state.flashTimer = window.setTimeout(() => {
+      state.flashTimer = null;
+      state.flashStatus = null;
+      if (hudElements.root && hudElements.root.isConnected) renderHud();
+    }, FLASH_STATUS_MS);
+    if (hudElements.root && hudElements.root.isConnected) renderHud();
+  }
+
+  function toggleManualPlayed(card) {
+    if (!CARD_SET.has(card)) return;
+    if (state.manualPlayed.has(card)) {
+      state.manualPlayed.delete(card);
+      state.played.delete(card);
+      state.manualHistory.push({ card, action: "unmark" });
+      invalidateDerivedCaches();
+      updateUndoButton();
+      flashStatus(`${displayCard(card)} manual mark cleared`);
+    } else {
+      state.manualPlayed.add(card);
+      state.played.add(card);
+      state.inHand.delete(card);
+      state.unresolved.delete(card);
+      state.manualHistory.push({ card, action: "mark" });
+      invalidateDerivedCaches();
+      updateUndoButton();
+      flashStatus(`${displayCard(card)} marked as played (manual override)`);
+    }
+    scanBoardState();
+  }
+
+  function undoManualMark() {
+    const last = state.manualHistory.pop();
+    if (!last) return;
+    if (last.action === "mark" && state.manualPlayed.has(last.card)) {
+      state.manualPlayed.delete(last.card);
+      state.played.delete(last.card);
+      flashStatus(`Undid manual mark on ${displayCard(last.card)}`);
+    } else if (last.action === "unmark" && !state.manualPlayed.has(last.card)) {
+      state.manualPlayed.add(last.card);
+      state.played.add(last.card);
+      state.inHand.delete(last.card);
+      flashStatus(`Restored manual mark on ${displayCard(last.card)}`);
+    }
+    invalidateDerivedCaches();
+    updateUndoButton();
+    scanBoardState();
+  }
+
+  function buildDiagnostics() {
+    return JSON.stringify({
+      version: extensionVersion(),
+      url: typeof location !== "undefined" ? location.href : "",
+      round: state.currentRoundText,
+      hand: [...state.inHand].sort(),
+      played: [...state.played].sort(),
+      manualPlayed: [...state.manualPlayed].sort(),
+      unresolved: [...state.unresolved.keys()].sort(),
+      tradedOut: [...state.tradedOut.entries()],
+      tradedIn: [...state.tradedIn].sort(),
+      pendingTrades: [...state.pendingTrades.entries()],
+      calls: [...state.tichuCalls.entries()],
+      counts: {
+        L: getSeatCardCount("nickholder_left"),
+        P: getSeatCardCount("nickholder_up"),
+        R: getSeatCardCount("nickholder_right")
+      },
+      unmappedSpecials: [...state.unmappedSpecials],
+      tradingActive: Boolean(state.tradingActive),
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : ""
+    }, null, 2);
+  }
+
+  async function copyDiagnostics() {
+    const text = buildDiagnostics();
+    let copied = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      }
+    } catch (_) {
+      copied = false;
+    }
+    if (!copied) {
+      try {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "readonly");
+        area.style.cssText = "position:fixed;top:-1000px;left:-1000px;opacity:0;";
+        document.body.appendChild(area);
+        area.select();
+        copied = document.execCommand("copy");
+        area.remove();
+      } catch (_) {
+        copied = false;
+      }
+    }
+    flashStatus(
+      copied ? "Diagnostics copied to clipboard" : "Could not copy diagnostics — clipboard blocked",
+      copied ? "ok" : "warn"
+    );
+  }
+
   function createHud() {
     const existing = document.getElementById("tichu-tracker-hud");
     if (existing && existing.isConnected && hudElements.root === existing && hudElements.body) return;
@@ -188,8 +448,9 @@
     if (existing) existing.remove();
     hudElements.cardCells.clear();
     hudElements.specialCells.clear();
+    hudElements.unseenCells.clear();
     for (const key of Object.keys(hudElements)) {
-      if (key !== "cardCells" && key !== "specialCells") hudElements[key] = null;
+      if (key !== "cardCells" && key !== "specialCells" && key !== "unseenCells") hudElements[key] = null;
     }
 
     const root = document.createElement("div");
@@ -198,7 +459,13 @@
     const header = document.createElement("div");
     header.id = "tichu-tracker-header";
     const title = document.createElement("span");
+    title.className = "tt-title";
     title.textContent = "TICHU TRACKER";
+    hudElements.versionLabel = document.createElement("span");
+    hudElements.versionLabel.className = "tt-version";
+    hudElements.versionLabel.textContent = `v${extensionVersion()}`;
+    hudElements.versionLabel.title = "Tracker version currently injected in this page.";
+    title.appendChild(hudElements.versionLabel);
     header.appendChild(title);
 
     const controls = document.createElement("div");
@@ -206,28 +473,36 @@
     const resetBtn = document.createElement("button");
     resetBtn.className = "tt-btn";
     resetBtn.textContent = "Reset";
-    resetBtn.title = "Clear tracked cards for a new round";
+    resetBtn.title = "Clear tracked cards for a new round (Alt+Shift+R)";
     resetBtn.addEventListener("click", () => {
       const roundEl = document.getElementById("txtRound");
       resetRoundState(roundEl ? roundEl.textContent.trim() : "");
     });
 
+    const undoBtn = document.createElement("button");
+    undoBtn.className = "tt-btn";
+    undoBtn.textContent = "↶";
+    undoBtn.title = "Undo the last manual card mark";
+    undoBtn.disabled = true;
+    undoBtn.addEventListener("click", () => undoManualMark());
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "tt-btn";
+    copyBtn.textContent = "⧉";
+    copyBtn.title = "Copy a diagnostics snapshot to the clipboard (Alt+Shift+C)";
+    copyBtn.addEventListener("click", () => { copyDiagnostics(); });
+
     const minBtn = document.createElement("button");
     minBtn.className = "tt-btn";
     minBtn.textContent = "—";
-    minBtn.title = "Minimize / Restore";
-    controls.appendChild(resetBtn);
-    controls.appendChild(minBtn);
+    minBtn.title = "Minimize / restore panel (Alt+Shift+T)";
+    controls.append(resetBtn, undoBtn, copyBtn, minBtn);
     header.appendChild(controls);
     root.appendChild(header);
 
     const body = document.createElement("div");
     body.id = "tichu-tracker-body";
-    minBtn.addEventListener("click", () => {
-      const isHidden = body.style.display === "none";
-      body.style.display = isHidden ? "" : "none";
-      minBtn.textContent = isHidden ? "—" : "+";
-    });
+    minBtn.addEventListener("click", () => setMinimized(!state.minimized));
 
     for (const suit of SUITS) {
       const row = document.createElement("div");
@@ -242,6 +517,7 @@
         cell.className = "tt-card-cell tt-state-unknown";
         cell.textContent = rank;
         cell.title = cardCode;
+        wireManualCardCell(cell, cardCode);
         row.appendChild(cell);
         hudElements.cardCells.set(cardCode, cell);
       }
@@ -255,10 +531,33 @@
       cell.className = "tt-special-cell tt-state-unknown";
       cell.textContent = spec.label;
       cell.title = spec.key;
+      wireManualCardCell(cell, spec.key);
       specialsRow.appendChild(cell);
       hudElements.specialCells.set(spec.key, cell);
     }
     body.appendChild(specialsRow);
+
+    const unseen = document.createElement("div");
+    unseen.id = "tichu-tracker-unseen";
+    unseen.title = "Copies of each rank that are neither in your hand nor observed as played.";
+    const unseenTitle = document.createElement("span");
+    unseenTitle.className = "tt-unseen-title";
+    unseenTitle.textContent = "Unseen";
+    unseen.appendChild(unseenTitle);
+    for (const rank of RANKS) {
+      const cell = document.createElement("span");
+      cell.className = "tt-unseen-cell";
+      const rankEl = document.createElement("span");
+      rankEl.className = "tt-unseen-rank";
+      rankEl.textContent = rank === "T" ? "10" : rank;
+      const valueEl = document.createElement("span");
+      valueEl.className = "tt-unseen-count";
+      valueEl.textContent = "4";
+      cell.append(rankEl, valueEl);
+      unseen.appendChild(cell);
+      hudElements.unseenCells.set(rank, { cell, valueEl });
+    }
+    body.appendChild(unseen);
 
     const meta = document.createElement("div");
     meta.id = "tichu-tracker-meta";
@@ -277,6 +576,12 @@
     hudElements.countsLabel = document.createElement("span");
     hudElements.countsLabel.textContent = "Cards [L / P / R]: - / - / -";
     row2.appendChild(hudElements.countsLabel);
+
+    const callsRow = document.createElement("div");
+    callsRow.className = "tt-meta-row";
+    hudElements.callsLabel = document.createElement("span");
+    hudElements.callsLabel.textContent = "Calls: none observed";
+    callsRow.appendChild(hudElements.callsLabel);
 
     const statusRow = document.createElement("div");
     statusRow.className = "tt-meta-row tt-status-row";
@@ -298,6 +603,7 @@
 
     meta.appendChild(row1);
     meta.appendChild(row2);
+    meta.appendChild(callsRow);
     meta.appendChild(statusRow);
     meta.appendChild(row3);
     meta.appendChild(row4);
@@ -375,6 +681,13 @@
     document.body.appendChild(root);
     hudElements.root = root;
     hudElements.body = body;
+    hudElements.minBtn = minBtn;
+    hudElements.undoBtn = undoBtn;
+    hudElements.copyBtn = copyBtn;
+    applyStoredLayout(root);
+    setMinimized(Boolean(state.layout && state.layout.minimized), false);
+    updateUndoButton();
+    observeHudSize(root);
     makeDraggable(root, header);
   }
 
@@ -382,10 +695,12 @@
     let offsetX = 0;
     let offsetY = 0;
     let isDragging = false;
+    let moved = false;
     handle.style.touchAction = "none";
     handle.addEventListener("pointerdown", event => {
       if (event.target.closest("button")) return;
       isDragging = true;
+      moved = false;
       const rect = container.getBoundingClientRect();
       offsetX = event.clientX - rect.left;
       offsetY = event.clientY - rect.top;
@@ -398,8 +713,18 @@
       const maxTop = Math.max(0, window.innerHeight - Math.min(container.offsetHeight, window.innerHeight));
       container.style.left = `${Math.min(maxLeft, Math.max(0, event.clientX - offsetX))}px`;
       container.style.top = `${Math.min(maxTop, Math.max(0, event.clientY - offsetY))}px`;
+      moved = true;
     });
-    const stopDragging = () => { isDragging = false; };
+    const stopDragging = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      if (!moved) return;
+      // Remember where the panel was left so a page reload does not undo the drag.
+      saveLayout({
+        left: Math.round(container.offsetLeft),
+        top: Math.round(container.offsetTop)
+      });
+    };
     handle.addEventListener("pointerup", stopDragging);
     handle.addEventListener("pointercancel", stopDragging);
     handle.addEventListener("lostpointercapture", stopDragging);
@@ -444,13 +769,23 @@
     return minis.querySelectorAll(".mini_card").length;
   }
 
+  function getTradeContainer() {
+    // Different DoD builds expose the exchange wrapper under either id; the
+    // former hand-only fallback silently required "tradingContainer" to exist.
+    for (const id of ["tradingContainer", "trading"]) {
+      const container = document.getElementById(id);
+      if (container && isElementVisible(container)) return container;
+    }
+    return null;
+  }
+
   function getTradingPhaseActive() {
     // Destination holders and wrappers may remain mounted outside the exchange.
     // A visible Send button or explicit trading container is the strongest phase
     // signal; the generic #trading wrapper counts only when it contains cards.
     if (isElementVisible(document.getElementById("btnSend"))) return true;
-    const trading = document.getElementById("trading");
-    if (trading && isElementVisible(trading) && trading.querySelector(".card")) return true;
+    const trading = getTradeContainer();
+    if (trading && trading.querySelector(".card")) return true;
     return PLAYER_DEFS.some(player => {
       const holder = document.getElementById(player.tradeId);
       return Boolean(holder && isElementVisible(holder) && holder.querySelector(".card"));
@@ -533,7 +868,7 @@
     // Some versions move the visual card over a trade slot but leave the node in
     // #hand. Only accept cards whose rendered position is close to a slot.
     const hand = document.getElementById("hand");
-    if (hand && isElementVisible(document.getElementById("tradingContainer"))) {
+    if (hand && getTradeContainer()) {
       for (const cardNode of hand.querySelectorAll(".card")) {
         const code = extractCardCode(cardNode);
         if (!code || !CARD_SET.has(code) || selections.has(code)) continue;
@@ -907,7 +1242,9 @@
     if (!actionLooksLikeTichuCall(text)) return false;
     const actor = findActorFromText(text);
     if (!actor) return false;
-    state.tichuCalls.add(actor.key);
+    // Greek for "grand" is matched with escapes so the source stays pure ASCII.
+    const isGrand = /\bgrand\b|\u03b3\u03ba\u03c1\u03b1\u03bd\u03c4/i.test(String(text || ""));
+    state.tichuCalls.set(actor.key, isGrand ? "grand" : "tichu");
     return true;
   }
 
@@ -946,8 +1283,10 @@
       const chosenCount = seat === "L" ? leftCount : rightCount;
       const otherCount = seat === "L" ? rightCount : leftCount;
       const knownCall = calledSeats && typeof calledSeats.has === "function" && calledSeats.has(seat);
+      const callType = knownCall && typeof calledSeats.get === "function" ? calledSeats.get(seat) : null;
+      const callName = callType === "grand" ? "Grand Tichu" : "Tichu";
       const callCaveat = knownCall
-        ? " A Tichu/Grand Tichu declaration has been observed for this opponent; that is a strategic warning, but the larger hand count is still the primary rule-of-thumb signal."
+        ? ` A ${callName} declaration has been observed for this opponent; that is a strategic warning, but the larger hand count is still the primary rule-of-thumb signal.`
         : " No declaration call is recorded for this opponent; that does not prove they have not called if tracking started late or DoD's action text was unrecognized.";
       return {
         seat,
@@ -1869,28 +2208,40 @@
       const unobservedNote = context.unobservedOutOfHandCount > 0
         ? ` ${context.unobservedOutOfHandCount} identities are modeled as already out of hands based on current hand counts; their exact identities were not observed.`
         : "";
-      hudElements.probabilityNote.textContent = currentCombo
-        ? `Uniform hidden-hand model; ${unknown} untracked identities.${unobservedNote} Table-beat odds use ${state.probabilityCacheSamples} sampled deals; capability ≠ likely play.`
-        : `Uniform hidden-hand model; ${unknown} untracked identities.${unobservedNote} Exact card odds use hand-slot constraints; no active combo classified.`;
+      const modelNote = `Uniform hidden-hand model; ${unknown} untracked identities.${unobservedNote}`;
+      hudElements.probabilityNote.textContent = !currentCombo
+        ? `${modelNote} Exact card odds use hand-slot constraints; no active combo classified.`
+        : responseEstimates
+          ? `${modelNote} Table-beat odds use ${state.probabilityCacheSamples} sampled deals; capability ≠ likely play.`
+          : `${modelNote} Table-beat odds are unavailable until the ledger reconciles.`;
     }
   }
 
-  function applyCellState(cell, key, probabilityContext) {
-    cell.classList.remove("tt-state-unknown", "tt-state-hand", "tt-state-traded", "tt-state-played", "tt-state-unresolved");
+  function applyCellState(cell, key, probabilityContext, wishRank = null) {
+    cell.classList.remove(
+      "tt-state-unknown", "tt-state-hand", "tt-state-traded", "tt-state-played", "tt-state-unresolved",
+      "tt-wish-card", "tt-manual"
+    );
+    const manual = state.manualPlayed.has(key);
+    if (manual) cell.classList.add("tt-manual");
+    // The active Mahjong wish is the rank everyone should try to answer with.
+    if (wishRank && isStandardCard(key) && key[0] === wishRank) cell.classList.add("tt-wish-card");
     if (state.played.has(key)) {
       cell.classList.add("tt-state-played");
-      cell.title = `${displayCard(key)} — played`;
+      cell.title = manual
+        ? `${displayCard(key)} — marked as played manually; click to clear the override`
+        : `${displayCard(key)} — played`;
       return;
     }
     if (state.inHand.has(key)) {
       cell.classList.add("tt-state-hand");
       const pendingTarget = state.pendingTrades.get(key);
-      cell.title = `${displayCard(key)} — in your hand${pendingTarget ? `; selected for trade to ${PLAYER_BY_KEY.get(pendingTarget).label}` : ""}`;
+      cell.title = `${displayCard(key)} — in your hand${pendingTarget ? `; selected for trade to ${PLAYER_BY_KEY.get(pendingTarget).label}` : ""}. Click to mark it played if DoD missed the play.`;
       return;
     }
     if (state.unresolved.has(key)) {
       cell.classList.add("tt-state-unresolved");
-      cell.title = `${displayCard(key)} — temporarily absent from hand; not counted as played until public-board evidence appears.`;
+      cell.title = `${displayCard(key)} — temporarily absent from hand; not counted as played until public-board evidence appears. Click to mark it played manually.`;
       return;
     }
     const target = state.tradedOut.get(key) || state.pendingTrades.get(key);
@@ -1903,41 +2254,70 @@
 
     cell.classList.add("tt-state-unknown");
     const odds = PLAYER_DEFS.map(player => `${player.label} ${percent(cardProbability(key, player.key, probabilityContext))}`).join(" · ");
-    cell.title = `${displayCard(key)} — estimated ownership: ${odds}. Assumes uniform distribution of unknown cards.`;
+    cell.title = `${displayCard(key)} — estimated ownership: ${odds}. Assumes uniform distribution of unknown cards. Click to mark it played manually.`;
   }
 
   function renderHud() {
+    if (!hudElements.root || !hudElements.root.isConnected || !hudElements.probabilityRows) return;
     const counts = {
       L: getSeatCardCount("nickholder_left"),
       P: getSeatCardCount("nickholder_up"),
       R: getSeatCardCount("nickholder_right")
     };
     const probabilityContext = buildProbabilityContext(counts);
-    for (const [cardCode, cell] of hudElements.cardCells.entries()) applyCellState(cell, cardCode, probabilityContext);
-    for (const [specKey, cell] of hudElements.specialCells.entries()) applyCellState(cell, specKey, probabilityContext);
+    // Resolve the action context first: it records new declarations and table
+    // plays, and every section below must render the same snapshot.
+    const isOurTurn = isYourTurn();
+    const actionContext = resolveDogHandoffContext(getActionContext(), isOurTurn);
+    const wishRank = getWishRank();
+    for (const [cardCode, cell] of hudElements.cardCells.entries()) applyCellState(cell, cardCode, probabilityContext, wishRank);
+    for (const [specKey, cell] of hudElements.specialCells.entries()) applyCellState(cell, specKey, probabilityContext, wishRank);
 
     hudElements.roundLabel.textContent = `Round: ${state.currentRoundText || "-"}`;
     const wishEl = document.getElementById("txtAskedCard");
-    const wishVisible = wishEl && isElementVisible(wishEl) && wishEl.textContent.trim() !== "";
-    hudElements.wishLabel.textContent = wishVisible ? wishEl.textContent.trim() : "Wish: None";
+    const wishText = wishEl && isElementVisible(wishEl) ? wishEl.textContent.trim() : "";
+    hudElements.wishLabel.textContent = wishText || "Wish: None";
+    hudElements.wishLabel.title = wishRank
+      ? `Active wish for ${rankNameFromValue(ASC_RANKS.indexOf(wishRank) + 2)}: play that rank when you can.`
+      : "No Mahjong wish is currently visible.";
 
     hudElements.countsLabel.textContent = `Cards [L / P / R]: ${counts.L ?? "?"} / ${counts.P ?? "?"} / ${counts.R ?? "?"}`;
+    const callLabels = [];
+    for (const [seat, call] of state.tichuCalls.entries()) {
+      const player = PLAYER_BY_KEY.get(seat);
+      callLabels.push(`${player ? player.label : seat} ${call === "grand" ? "Grand Tichu" : "Tichu"}`);
+    }
+    hudElements.callsLabel.textContent = callLabels.length ? `Calls: ${callLabels.join(" · ")}` : "Calls: none observed";
+    hudElements.callsLabel.title = "Calls are parsed from DoD action text. A missing call is not proof that nobody declared.";
+
+    for (const rank of RANKS) {
+      const entry = hudElements.unseenCells.get(rank);
+      if (!entry) continue;
+      let seen = 0;
+      for (const suit of SUITS) {
+        const code = `${rank}${suit.id}`;
+        if (state.inHand.has(code) || state.played.has(code)) seen++;
+      }
+      const remaining = Math.max(0, 4 - seen);
+      entry.valueEl.textContent = String(remaining);
+      entry.cell.classList.toggle("tt-unseen-empty", remaining === 0);
+      entry.cell.title = `${rankNameFromValue(ASC_RANKS.indexOf(rank) + 2)}s unseen: ${remaining} of 4 (not in your hand and not played)`;
+    }
+
     const hasHandNode = Boolean(document.getElementById("hand"));
-    if (!hasHandNode && !document.getElementById("cardsHolder")) {
-      hudElements.statusLabel.textContent = "Waiting for DoD game board…";
-      hudElements.statusLabel.className = "tt-status-warn";
+    const flashActive = state.flashStatus && Date.now() < state.flashStatus.until;
+    if (flashActive) {
+      setStatus(state.flashStatus.text, state.flashStatus.tone);
+    } else if (!hasHandNode && !document.getElementById("cardsHolder")) {
+      setStatus("Waiting for DoD game board…", "warn");
     } else if (!state.inHand.size) {
-      hudElements.statusLabel.textContent = "No hand cards currently detected — awaiting a stable board update";
-      hudElements.statusLabel.className = "tt-status-warn";
+      setStatus("No hand cards currently detected — awaiting a stable board update", "warn");
     } else if (!probabilityContext.consistent) {
-      hudElements.statusLabel.textContent = `Cards detected (${state.inHand.size}); probability model paused: ${probabilityContext.reason || "ledger mismatch"}`;
-      hudElements.statusLabel.className = "tt-status-error";
+      setStatus(`Cards detected (${state.inHand.size}); probability model paused: ${probabilityContext.reason || "ledger mismatch"}`, "error");
     } else if (probabilityContext.unobservedOutOfHandCount > 0) {
-      hudElements.statusLabel.textContent = `Tracking ${state.inHand.size} hand cards · ${probabilityContext.unobservedOutOfHandCount} earlier card identities unobserved · ledger ${probabilityContext.accountedCount}/56`;
-      hudElements.statusLabel.className = "tt-status-warn";
+      setStatus(`Tracking ${state.inHand.size} hand cards · ${probabilityContext.unobservedOutOfHandCount} earlier card identities unobserved · ledger ${probabilityContext.accountedCount}/56`, "warn");
     } else {
-      hudElements.statusLabel.textContent = `Tracking ${state.inHand.size} hand cards · ledger ${probabilityContext.accountedCount}/56 · ${state.unresolved.size} unresolved`;
-      hudElements.statusLabel.className = "tt-status-ok";
+      setStatus(`Tracking ${state.inHand.size} hand cards · ledger ${probabilityContext.accountedCount}/56 · ${state.unresolved.size} unresolved`, "ok");
     }
 
     const tradeEntries = [];
@@ -1957,11 +2337,10 @@
 
     const warnings = [];
     if (state.unmappedSpecials.size) warnings.push(`Unmapped code(s): ${[...state.unmappedSpecials].join(", ")}`);
-    if (state.unresolved.size) warnings.push(`Temporarily unresolved: ${[...state.unresolved.keys()].map(displayCard).join(", ")}`);
+    if (state.unresolved.size) warnings.push(`Temporarily unresolved: ${[...state.unresolved.keys()].map(displayCard).join(", ")} (click a card to mark it played)`);
+    if (state.manualPlayed.size) warnings.push(`Manual marks: ${[...state.manualPlayed].map(displayCard).join(", ")}`);
     hudElements.unmappedLabel.textContent = warnings.join(" · ");
 
-    const isOurTurn = isElementVisible(document.getById ? document.getById("infoYourTurn") : document.getElementById("infoYourTurn"));
-    const actionContext = resolveDogHandoffContext(getActionContext(), isOurTurn);
     const recommendation = getRecommendation(
       [...state.inHand], actionContext, counts, isOurTurn, Boolean(state.tradingActive), probabilityContext
     );
@@ -1982,7 +2361,18 @@
     hudElements.dragonTitle.textContent = dragonAdvice.title;
     hudElements.dragonTitle.className = `tt-advice-title tt-advice-${dragonAdvice.tone}`;
     hudElements.dragonDetails.textContent = dragonAdvice.details;
+    updateUndoButton();
     renderProbabilities(counts, probabilityContext, actionContext.currentCombo);
+  }
+
+  function setStatus(text, tone) {
+    if (!hudElements.statusLabel) return;
+    hudElements.statusLabel.textContent = text;
+    hudElements.statusLabel.className = `tt-status-${tone || "ok"}`;
+  }
+
+  function isYourTurn() {
+    return isElementVisible(document.getElementById("infoYourTurn"));
   }
 
   function scanBoardState() {
@@ -2066,6 +2456,15 @@
       }
       state.inHand = currentHandSet;
 
+      // Manual overrides win over DOM inference: DoD occasionally removes a card
+      // without leaving evidence in any public container, which would otherwise
+      // keep the ledger unresolved for the rest of the hand.
+      for (const card of state.manualPlayed) {
+        state.inHand.delete(card);
+        state.played.add(card);
+        state.unresolved.delete(card);
+      }
+
       // Public board/seat play containers are the positive evidence for a play.
       // Sets prevent cards represented in overlapping animation containers from
       // being counted twice. The .droppedCard class alone is deliberately ignored.
@@ -2102,8 +2501,7 @@
     } catch (error) {
       console.error("[DoD Tichu Tracker] Board scan failed:", error);
       if (hudElements.statusLabel) {
-        hudElements.statusLabel.textContent = `Tracker error: ${error && error.message ? error.message : "unknown error"}`;
-        hudElements.statusLabel.className = "tt-status-error";
+        setStatus(`Tracker error: ${error && error.message ? error.message : "unknown error"}`, "error");
       }
     } finally {
       state.ignoreBoardForScan = false;
@@ -2160,6 +2558,30 @@
       }, true);
       state.clickListenerAttached = true;
     }
+    if (!state.keyListenerAttached) {
+      document.addEventListener("keydown", event => {
+        if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey) return;
+        const target = event.target;
+        if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || ""))) return;
+        const code = event.code || "";
+        if (code === "KeyT") {
+          event.preventDefault();
+          setMinimized(!state.minimized);
+        } else if (code === "KeyR") {
+          event.preventDefault();
+          const roundEl = document.getElementById("txtRound");
+          resetRoundState(roundEl ? roundEl.textContent.trim() : "");
+        } else if (code === "KeyC") {
+          event.preventDefault();
+          copyDiagnostics();
+        }
+      }, true);
+      state.keyListenerAttached = true;
+    }
+    if (!state.viewportListenerAttached) {
+      window.addEventListener("resize", () => clampToViewport(hudElements.root));
+      state.viewportListenerAttached = true;
+    }
     return true;
   }
 
@@ -2174,17 +2596,19 @@
   }
 
   const testApi = {
+    VERSION, LAYOUT_STORAGE_KEY, FLASH_STATUS_MS,
     RANKS, ASC_RANKS, SUITS, SPECIAL_DEFS, STANDARD_CARDS, ALL_CARDS, CARD_SET,
     state, normalizeCardCode, resolveSpecialKey, isStandardCard, cardRank,
     standardRank, classifyStraight, classifyCombo, comboLabel, canBeat, parseWishRank,
-    actionLooksLikeDogPlay, actionLooksLikeTichuCall, actionContainsPlayerName, recordTichuCallFromAction,
+    actionLooksLikeDogPlay, actionLooksLikeTichuCall, isYourTurn, getTradeContainer,
+    actionContainsPlayerName, recordTichuCallFromAction,
     hasOpponentNearlyOut, updateActorForNewTable, getDragonGiftAdvice, resolveDogHandoffContext,
     enumerateCombos, buildProbabilityContext, cardProbability, probabilityOfAny,
     sampleHiddenHands, makeSeededRandom, handCanBeatCombo, estimateSeatsCanBeat,
     probabilityAtLeastOneAbove,
     estimateNoResponseProbability, wilsonInterval, percentRange, getRecommendation, candidateContainsWish,
     declarationHandMetrics, getDeclarationAdvice,
-    clearRoundData,
+    clearRoundData, toggleManualPlayed, undoManualMark, buildDiagnostics, invalidateDerivedCaches,
     commitPendingTrades, readTradeSelections, readHandCards, getTradingPhaseActive,
     scanBoardState, createHud, renderHud
   };

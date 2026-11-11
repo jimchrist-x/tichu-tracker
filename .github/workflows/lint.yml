@@ -1,0 +1,19 @@
+name: syntax
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check tracker.js
+      - name: Validate manifest.json
+        run: node -e "const m=require('./manifest.json'); if(!m.manifest_version||!m.content_scripts) { throw new Error('invalid manifest'); } console.log('manifest ok', m.version)"
