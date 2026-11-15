@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tichu Tracker 2.0 — preview harness</title>
+  <link rel="stylesheet" href="../tracker.css" />
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background:
+        radial-gradient(circle at 50% 40%, rgba(46, 125, 90, 0.42), transparent 55%),
+        linear-gradient(160deg, #13251d, #0a1410 60%, #07100c);
+      color: #d9e7dd;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    .preview-note {
+      position: fixed;
+      left: 18px;
+      bottom: 16px;
+      max-width: 520px;
+      padding: 10px 13px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      background: rgba(4, 10, 8, 0.72);
+      font-size: 11px;
+      line-height: 1.5;
+      color: #a8c4b5;
+      z-index: 5;
+    }
+    .preview-note strong { color: #e9f7ef; }
+    .controls {
+      position: fixed;
+      left: 18px;
+      top: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      max-width: 560px;
+      z-index: 5;
+    }
+    .controls button {
+      padding: 6px 9px;
+      border: 1px solid #3d5b4c;
+      border-radius: 6px;
+      background: #16261f;
+      color: #cfe7d9;
+      font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .controls button:hover { background: #1d3328; border-color: #567c67; }
+    .table {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-columns: 1fr 1.25fr 1fr;
+      grid-template-rows: 1fr 1.25fr 1fr;
+      pointer-events: none;
+    }
+    .seat { display: flex; align-items: center; justify-content: center; gap: 6px; flex-direction: column; }
+    .seat-name { font-size: 12px; color: #9fc2ad; letter-spacing: 0.08em; text-transform: uppercase; }
+    .mini-badge {
+      min-width: 52px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(6, 20, 14, 0.72);
+      text-align: center;
+      font-size: 13px;
+      font-weight: 800;
+      color: #eaf7ef;
+    }
+    .seat.left { grid-column: 1; grid-row: 2; }
+    .seat.top { grid-column: 2; grid-row: 1; }
+    .seat.right { grid-column: 3; grid-row: 2; }
+    .seat.bottom { grid-column: 2; grid-row: 3; }
+    .center {
+      grid-column: 2;
+      grid-row: 2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      border: 1px dashed rgba(255, 255, 255, 0.12);
+      border-radius: 18px;
+    }
+    .card {
+      width: 42px;
+      height: 60px;
+      border-radius: 6px;
+      border: 1px solid #cbd5e1;
+      background: linear-gradient(160deg, #ffffff, #e7edf5);
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 13px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+    }
+    .hand-row {
+      position: fixed;
+      left: 50%;
+      bottom: 26px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      z-index: 4;
+    }
+    .hidden-info { position: fixed; left: 50%; top: 8px; transform: translateX(-50%); font-size: 11px; color: #9fe7bd; z-index: 6; }
+    .hidden-info[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <button data-deal="strong">Strong 14</button>
+    <button data-deal="weak">Weak 14</button>
+    <button data-deal="grand">Grand Tichu (8)</button>
+    <button data-action="play">Opponent plays Q♣</button>
+    <button data-action="pass">Left passes</button>
+    <button data-action="tichu">Left calls Tichu</button>
+    <button data-action="turn">Toggle my turn</button>
+    <button data-action="reset">Reset</button>
+  </div>
+
+  <div class="table">
+    <div class="seat top"><span class="seat-name">Partner</span><span class="mini-badge" id="count-up">14</span></div>
+    <div class="seat left"><span class="seat-name">Left</span><span class="mini-badge" id="count-left">14</span></div>
+    <div class="seat right"><span class="seat-name">Right</span><span class="mini-badge" id="count-right">14</span></div>
+    <div class="seat bottom"><span class="seat-name">You</span><span class="mini-badge" id="count-bottom">14</span></div>
+    <div class="center" id="center"></div>
+  </div>
+
+  <div class="hidden-info" id="turn-info">Your turn</div>
+  <div class="hand-row" id="preview-hand"></div>
+
+  <!-- Mocked DoD board. The tracker only reads these elements. -->
+  <div id="txtRound" style="position:fixed;left:-9999px">Round 4</div>
+  <div id="nickholder_left" style="position:fixed;left:-9999px">
+    <div id="minis"><span class="mini_fontSmall">14</span></div>
+    <div class="playerName">Ann</div>
+  </div>
+  <div id="nickholder_up" style="position:fixed;left:-9999px">
+    <div id="minis"><span class="mini_fontSmall">14</span></div>
+    <div class="playerName">Bob</div>
+  </div>
+  <div id="nickholder_right" style="position:fixed;left:-9999px">
+    <div id="minis"><span class="mini_fontSmall">14</span></div>
+    <div class="playerName">Cara</div>
+  </div>
+  <div id="hand" style="position:fixed;left:-9999px"></div>
+  <div id="cardsHolder" style="position:fixed;left:-9999px"></div>
+  <div id="txtAskedCard" style="position:fixed;left:-9999px"></div>
+  <div id="txtLastAction" style="position:fixed;left:-9999px"><div id="textContainer">New deal</div></div>
+  <div id="infoYourTurn" style="position:fixed;left:-9999px"></div>
+
+  <p class="preview-note">
+    <strong>Preview harness.</strong> This page mocks the DoD board so the HUD can be inspected without a game.
+    Use the buttons to deal hands, play cards, pass, call Tichu and switch turns. The tracker itself never reads
+    hidden hands; this harness only changes what the page shows.
+  </p>
+
+  <script>window.__TICHU_TRACKER_DEBUG__ = true;</script>
+  <script src="../src/core.js"></script>
+  <script src="../src/probability.js"></script>
+  <script src="../tracker.js"></script>
+  <script src="./preview.js"></script>
+</body>
+</html>
