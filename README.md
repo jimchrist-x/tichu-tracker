@@ -1,147 +1,243 @@
-# DoD Games tichu tracker
+# DoD Games Tichu Tracker
 
-A browser content script that adds a live Tichu card-tracking and strategy panel to the game board on [www.dod.gr](https://www.dod.gr/). It tracks information visible in the page, estimates the distribution of unseen cards, and offers heuristic suggestions while you play.
+A browser content script that adds a compact Tichu card tracker, hidden-hand odds and a move advisor to the game board on [www.dod.gr](https://www.dod.gr/). It only reads information the page already shows: your hand, public plays, trade slots, opponent card counts, the action log and the Mahjong wish. It never reads an opponent's hidden hand.
 
-Current version: **1.5.0** (also shown in the panel header).
+Current version: **2.0.0**.
 
-## Features
+---
 
-- **Live 56-card ledger** — tracks the 52 standard cards and the four special cards: Dragon, Phoenix, Dog, and Mahjong.
-- **Played-card tracking** — marks cards as played when they appear in the public board/seat areas. A card disappearing from your hand alone is not treated as proof that it was played.
-- **Manual card overrides** — click any card cell (or focus it and press Enter/Space) to mark it as played when DoD's DOM misses a play. Manual marks are drawn with a gold ring, are listed in the warning row, and can be reverted one at a time with the **↶** button.
-- **Unseen-by-rank counter** — a compact row shows how many copies of each rank are neither in your hand nor played yet, so counting Aces, Kings and Queens never needs mental arithmetic.
-- **Trade tracking** — records outgoing trade selections, commits them when the exchange completes, and tracks incoming cards when they can be identified.
-- **Hidden-hand probabilities** — estimates which opponent may hold an unseen card, including Dragon, Phoenix, Aces, and cards above a Queen. Known traded cards are assigned to their recorded recipient.
-- **Move recommendations** — suggests leads, replies, or passes; classifies common combinations and bombs; considers the active Mahjong wish, your partner's lead, and opponents who are down to one card.
-- **Sampled response estimates** — estimates how often a modeled remaining hand could beat the current table combination, with an uncertainty interval when available.
-- **Tichu declaration advisor** — gives a heuristic Grand Tichu assessment for the initial eight cards and a Tichu assessment before the first play.
-- **Dragon gift advisor** — recommends which opponent to give the Dragon-winning trick to, primarily using the opponents' remaining card counts and any recognized declaration calls.
-- **Observed declaration log** — records whether a recognized call was Tichu or Grand Tichu per seat.
-- **Dog handoff handling** — recognizes that playing Dog ends the trick and transfers the lead to your partner.
-- **Movable, minimizable, remembered HUD** — drag the header to reposition the panel, resize it from the corner, and use `—` / `+` to minimize or restore it. Position, size and collapsed state are stored in `localStorage` and restored on the next load.
-- **Wish highlighting** — every card that matches the active Mahjong wish gets a gold outline.
-- **Diagnostics snapshot** — the **⧉** button copies a JSON summary of the tracker state (hand, played cards, trades, calls, counts, version) for bug reports.
-- **Automatic updates** — watches for game-board DOM changes and also performs periodic fallback scans.
+## What is new in 2.0
 
-## Keyboard shortcuts
+2.0 is a UI and inference rewrite, not just a feature patch.
+
+- **Much smaller UI.** The old panel stacked eight dense sections. The HUD now has three tabs — **Play**, **Cards** and **Odds** — one recommendation card, a few chips and a collapsed “Why this play?” section. The Dragon and Tichu advisors appear only when they are relevant.
+- **Hidden-hand odds with pass evidence.** A player who passed on a combination is hard evidence that they could not beat it. Those observations now constrain the sampled hands, which sharpens every ownership estimate. The model falls back to a uniform deal and says so if the evidence conflicts.
+- **Combo-presence probabilities.** The Odds tab answers questions like “how likely is Left to hold a bomb or a full house right now?” with a 95% interval for every seat.
+- **Minimum-play hand plan.** The tracker computes the fewest legal plays needed to empty your hand, so “shed cards” advice is tied to a concrete route out.
+- **Simulated Tichu / Grand Tichu odds.** A fast heuristic playout estimates the chance you finish first, the chance your team finishes first, and the chance of a 1–2 finish. Grand Tichu samples the six unseen cards before evaluating the call.
+- **Team-aware threat estimates.** “No response” used to count your partner as a threat. It now separates opponents who can beat your play from a partner who can beat it, which is usually good news.
+- **Faster tracking.** Structural combination generation replaces the 2¹⁴ subset scan on every render, and unchanged board scans exit immediately. The fallback poll is slower and no longer repaints the HUD needlessly.
+- **Bugs fixed** include Greek action verbs never matching because of ASCII `\b`, wish parsing treating an unrelated number as a wish, a stale actor after the action log was cleared, and missing straights when the Mahjong was in hand. See [DESIGN-REVIEW.md](DESIGN-REVIEW.md) for the full list.
+
+---
+
+## Using the panel
+
+### Play tab
+
+The Play tab answers one question: **what should I do now?**
+
+- A large action card shows **LEAD**, **PLAY**, **PASS**, **WAIT** or **DECIDE** with the recommended cards and combination.
+- One line explains the reason.
+- Up to three chips summarise the **plan**, the chance the play **holds the trick**, and the **opponent bomb risk**.
+- Alerts appear only when they matter: an opponent down to one card, a bomb risk above 35%, a Tichu call, unresolved cards, or a paused model.
+- **Why this play?** expands to the sampled-deal estimate, alternatives, partner information and model confidence.
+- During the initial eight-card deal the tab becomes a **Grand Tichu decision card** instead of suggesting a play before the deal is complete.
+
+### Cards tab
+
+The compact 4×13 grid is the ledger.
+
+- **Blue** cards are in your hand.
+- **Gold** cards are traded or selected for a trade.
+- **Dim/struck-through** cards have been played.
+- **Dashed gold** means a card left your hand but public evidence has not confirmed where it went.
+- A gold inset ring marks a **manual** played override.
+- A gold outline marks every card matching the active **Mahjong wish**.
+
+The unseen row shows how many copies of each rank are neither in your hand nor played. Click any card to mark it played manually; the ↶ button in the header undoes the last mark. Manual marks are your observations, not page evidence, and are cleared by Reset.
+
+### Odds tab
+
+| Column | Meaning |
+| --- | --- |
+| **Cards** | Remaining cards for that seat |
+| **Bomb** | Chance the hand contains a four-of-a-kind or straight-flush bomb |
+| **Full** | Chance the hand contains a full house |
+| **Str** | Chance the hand contains a straight |
+| **K+** | Chance the hand contains a King, Ace, Dragon or Phoenix |
+| **Beats** | Chance the hand can beat the current table combination |
+
+Below the table are the **hand plan**, the **simulation** summary and the model note (sample count, pass constraints, ledger reconciliation).
+
+### Keyboard shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `Alt` + `Shift` + `T` | Minimize / restore the panel |
+| `Alt` + `Shift` + `T` | Collapse / restore the panel |
 | `Alt` + `Shift` + `R` | Reset the tracked round |
-| `Alt` + `Shift` + `C` | Copy the diagnostics snapshot |
+| `Alt` + `Shift` + `C` | Copy a diagnostics snapshot |
+| `Alt` + `Shift` + `1/2/3` | Switch to Play / Cards / Odds |
 
 Shortcuts are ignored while typing in an input, textarea or contenteditable element.
 
-## Requirements
+---
 
-- A supported [www.dod.gr](https://www.dod.gr/) Tichu game page with the expected game-board elements.
-- A browser that supports Manifest V3-style content scripts (for example, a compatible Chromium or Firefox setup).
-- The extension files: `manifest.json`, `tracker.js`, and `tracker.css`.
+## How the estimates work
 
-The JavaScript uses the page's existing DOM structure and selectors, so significant changes to [www.dod.gr's](https://www.dod.gr/) game interface may require code updates. The stylesheet is separate: make sure `tracker.css` is included by the extension so the panel and card states are styled correctly.
+### Ledger
+
+The tracker reconciles a 56-card ledger from:
+
+1. the cards in your hand,
+2. cards that appear in public play containers,
+3. committed outgoing trades (which give a known owner),
+4. manual marks,
+5. the opponents' visible remaining-card counts.
+
+If the ledger conflicts — for example, a card is in your hand and also on the board while DoD animates — estimates pause instead of inventing a distribution. Cards that cannot fit into any opponent's hand are kept in an explicit **out-of-hand** bucket; the tracker does not force them into a hidden hand.
+
+### Uniform hidden-hand model
+
+The baseline model distributes unseen card identities uniformly across the remaining opponent hand slots. Exact per-card and “at least one of these cards” probabilities use the hypergeometric distribution. When pass evidence or an out-of-hand bucket is present, per-card and “at least one” odds are taken from the same sampled worlds as the Odds tab, so the numbers stay consistent.
+
+### Pass evidence
+
+When the action log says a player passed while an unchanged, classified combination was on the table, the tracker records a constraint: that player does not hold a combination capable of beating it. Sampling rejects worlds that contradict the constraint. This is the strongest free information in Tichu and often changes the odds substantially.
+
+The tracker is deliberately conservative: it only records a pass when the table signature did not change between scans and the actor was recognised. Conflicting evidence (for example, a card known from a trade that would have allowed a beat) falls back to the unconstrained model with a warning.
+
+### Combo presence
+
+For each sampled world and each seat, the rules engine checks whether that hand contains at least one bomb, full house, straight, pair run, triple, pair or K+ card. The fraction of worlds gives the probability; a Wilson interval communicates sampling uncertainty.
+
+### Simulated playout
+
+The simulation samples opponents' hands (respecting known trades and pass constraints), then plays the hand out with a deterministic heuristic policy:
+
+- lead long combinations, keep control cards and defer bombs;
+- feed a partner who is nearly out with the Dog;
+- take a trick cheaply, but do not spend a top control card on a low single while the hand is long;
+- pass when the partner is winning unless going out immediately;
+- model the Dragon gift and the Dog handoff.
+
+It reports **you first**, **partner first**, **team first** and **1–2 finish**. This is a strength estimate, not a solved game. The policy does not model Mahjong wishes, trick points, opponent tendencies or team score. Treat the number as a second opinion, not a promise.
+
+### Move recommendation
+
+The recommendation combines:
+
+- the minimum-play hand plan,
+- combination cost (breaking pairs, spending Dragon/Phoenix/Aces),
+- the active Mahjong wish (a legal wished reply is preferred),
+- partner ownership of the current trick,
+- opponents down to one card,
+- the sampled probability that an opponent can beat the candidate,
+- the number of cards the play sheds.
+
+It is a heuristic advisor, not perfect-information play, and it says so in the expanded details.
+
+---
 
 ## Installation
 
-### 1. Prepare the Extension Directory
-
-Clone the repository or download the source files to your local machine. Ensure the root directory matches the following file structure:
+The extension itself needs only these files:
 
 ```text
 .
 ├── icons/
 ├── manifest.json
-├── README.md
 ├── tracker.css
-└── tracker.js
+├── tracker.js
+└── src/
+    ├── core.js
+    └── probability.js
 ```
 
-`test/`, `package.json` and `.github/` are only needed for development; the extension itself loads just the files above.
+`test/`, `preview/`, `package.json` and `.github/` are development-only. The `preview/` folder contains a mocked DoD board for inspecting the HUD without a game.
 
-### 2. Load the Extension in Your Browser
+### Chromium-based browsers
 
-#### Chromium-Based Browsers (Chromium, Google Chrome, Brave, Microsoft Edge)
+1. Open `chrome://extensions/`.
+2. Enable **Developer mode**.
+3. Choose **Load unpacked** and select the repository root.
+4. Confirm that **Tichu Tracker** is enabled.
 
-1. Open the browser and navigate to `chrome://extensions/`.
-2. Enable **Developer mode** using the toggle switch in the top-right corner.
-3. Click **Load unpacked** in the top-left action bar.
-4. Select the root directory containing `manifest.json`, `tracker.js`, `tracker.css`, and `icons/`.
-5. Confirm that **Tichu Tracker** appears in your extensions list and is enabled.
+### Firefox
 
-#### Mozilla Firefox
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Choose **Load Temporary Add-on…**.
+3. Select `manifest.json`.
+4. Temporary add-ons persist only for the current browser session.
 
-1. Open Firefox and navigate to `about:debugging#/runtime/this-firefox`.
-2. Click **Load Temporary Add-on...**.
-3. Navigate to the extension directory and select the `manifest.json` file.
-4. Confirm that the extension is listed under **Temporary Extensions**. *(Note: Temporary add-ons in standard Firefox builds persist only for the current browser session and must be reloaded after a browser restart.)*
-
-## Usage
-
-1. Start or join a Tichu game on [www.dod.gr](https://www.dod.gr).
-2. Keep the tracker panel visible while playing. It updates as the page's hand, table, trade slots, and player card counts change.
-3. Use the panel's card grid to review card status. Hover over a card cell for the tracker's current details and, when available, estimated opponent ownership.
-4. If a play was not detected (for example because the trick resolved during a DOM rebuild), click the card to mark it played manually. Use **↶** if you marked the wrong card.
-5. Read **Move recommendation (heuristic)** for a suggested lead, response, or pass.
-6. Check **Hand probabilities** for estimates about special/high cards and the chance a player can beat the current combination.
-7. Review **Tichu declaration advisor** before declaring, and **Dragon gift adviser** after winning a trick with Dragon.
-8. If tracking gets out of sync, use **Reset** (or `Alt`+`Shift`+`R`) to clear the ledger and let it rebuild from the current visible game state.
-
-## Card-state legend
-
-- **Blue — Hand:** the card is currently detected in your hand.
-- **Gold — Traded:** the card is recorded as sent or selected for a trade.
-- **Dim — Played:** the card has been observed in public-play areas, or you marked it manually. Manual marks additionally carry a gold inset ring.
-- **Gold outline — Wish:** the rank currently wished with the Mahjong.
-- **Unknown:** the card has not been conclusively identified as in your hand, traded, or played. Estimates may appear in its tooltip.
-- **Unresolved:** the card temporarily disappeared from your hand, but the tracker has not yet found public-board or trade evidence to confirm its destination. Click it to resolve the entry manually.
-
-Trade selections remain provisional until the exchange is committed. The tracker intentionally avoids treating drag animations or temporary card disappearance as confirmed plays.
-
-## How estimates work
-
-The tracker does **not** read opponents' hidden hands. It builds a ledger from your detected hand, public plays, recognized trades, and visible remaining-card counts. Unknown card identities are modeled as uniformly distributed among the remaining opponent hand slots, subject to the known information. If tracking starts partway through a hand, the model can keep unidentified cards in an explicit “out-of-hand” category rather than forcing them into an opponent's hand.
-
-When the ledger is inconsistent—for example, because the page is still animating or a card transition was missed—the tracker pauses uncertain probability estimates and reports the issue rather than presenting them as reliable. Monte Carlo estimates describe what the sampled hands *could* beat; they do not predict what an opponent will actually choose to play.
-
-Manual marks are your own observations, not page evidence. They are treated as known facts for the rest of the hand (and cleared by **Reset**), which is why they are visually distinguished and reversible.
-
-## Limitations
-
-- Recommendations are heuristic, not guaranteed optimal. They do not model every strategic factor, such as opponents' tendencies, team score, or all possible partner intentions.
-- Probability estimates rely on a uniform hidden-card distribution and accurate visible card counts. They can be unavailable or less reliable if tracking starts mid-hand or the board is changing.
-- Tichu-call recognition depends on the action text being exposed in a recognizable form. A call not recorded by the tracker does not prove that no call was made.
-- The Dragon gift adviser cannot use per-player captured-point totals because the current tracker does not reliably obtain them from the page.
-- The tracker depends on [www.dod.gr's](https://www.dod.gr) current DOM selectors and card-code conventions. Website changes may break detection until the script is updated.
+---
 
 ## Development
 
-The tracker core is plain JavaScript with no build step. Tests run on Node 20 or newer:
+No build step is required. Tests run on Node 20 or newer:
 
-```text
+```bash
 npm install
 npm test
 ```
 
-- `test/logic.test.js` covers card normalization, combination classification, bomb ordering, the exhaustive-vs-fast beat check, wish parsing, declaration advice, the probability ledger and the Dragon gift heuristic.
-- `test/hud.test.js` boots `tracker.js` inside jsdom against a mocked DoD board and checks HUD rendering, the unseen counter, manual overrides, the undo button, keyboard shortcuts, layout persistence and Tichu-call parsing.
-- `tracker.js` exports its internals through `module.exports` when it is loaded in Node, which is what the tests use. In a browser it stays an isolated IIFE.
+The test suite covers:
 
-`npm test` is also run by GitHub Actions on every push and pull request.
+- `test/logic.test.js` — card normalisation, combination rules, bombs, straights, the exhaustive-vs-fast beat check, probability reconciliation and the legacy API compatibility layer.
+- `test/engine.test.js` — structural combo generation equivalence, minimum-play plans, pass constraints, combo presence, the playout, known-trade deals, the Grand Tichu decision and structured recommendations.
+- `test/hud.test.js` — jsdom boot of the three content scripts, tabbed layout, card states, manual overrides, pass evidence, Tichu calls, shortcuts, collapse and layout persistence.
+
+`npm test` runs on GitHub Actions for every push and pull request; a separate workflow checks JavaScript syntax and validates the manifest.
+
+### Preview harness
+
+```bash
+npm run preview
+# open http://localhost:8765/preview/index.html
+```
+
+The preview page mocks the DoD board and exposes buttons to deal strong/weak/Grand Tichu hands, play a card, pass, call Tichu and toggle the turn. It is the fastest way to check the HUD without a live table.
+
+### Debug API
+
+On `localhost` (or when `window.__TICHU_TRACKER_DEBUG__` is set before the scripts load), the tracker exposes `window.TichuTracker` with the ledger, recommendation, odds and diagnostics helpers. It is not exposed on dod.gr.
+
+---
+
+## Limitations
+
+- The recommendation is heuristic. It does not model opponent tendencies, team score, trick points, or every partner intention.
+- The playout policy is intentionally simple and deterministic; its percentages are comparative, not authoritative.
+- Pass evidence depends on DoD exposing a recognisable pass action while the trick is stable. A missed pass only removes information; it does not corrupt the ledger.
+- Tichu-call recognition depends on the action text. A missing call is not proof that nobody declared.
+- Per-player captured-point totals are not reliably exposed by the page, so the Dragon adviser cannot use them.
+- Tracking that starts mid-hand keeps unobserved identities in an out-of-hand bucket; early-hand probabilities are less precise in that case.
+- The DOM selectors and card-code conventions are DoD-specific and may need updating if the site changes.
+
+---
+
+## Design review
+
+The 2.0 rewrite was driven by a design review of the 1.5 codebase. The full list of identified problems, fixes and remaining trade-offs is in [DESIGN-REVIEW.md](DESIGN-REVIEW.md).
+
+---
 
 ## Changelog
 
+### 2.0.0
+
+- Rewrite: pure rules/probability core in `src/core.js` and `src/probability.js`; the DOM layer is now only responsible for reading the board and rendering.
+- Simplified three-tab HUD with progressive disclosure; removed the always-on declaration/Dragon sections and long duplicated explanatory text.
+- Added pass-constrained hidden-hand sampling and pass-adjusted card probabilities.
+- Added per-seat bomb / full-house / straight / K+ presence probabilities with Wilson intervals.
+- Added minimum-play hand planning.
+- Added Monte Carlo Tichu and Grand Tichu odds, including a proper six-card completion for Grand Tichu.
+- Added team-aware threat estimates (partner beats are not treated as threats).
+- Added a Grand Tichu decision card instead of a premature play recommendation.
+- Fixed Greek action verbs, wish parsing, stale action text, Mahjong straights and the Phoenix lead value.
+- Added fingerprint-based scan skipping, structural combo generation and slower fallback polling for lower CPU use.
+- Added tab persistence, collapsible tab strip, SVG copy icon, ARIA labels and an accessible tabbed layout.
+- Added engine tests, a mocked preview harness and a syntax workflow covering all source files.
+
 ### 1.5.0
 
-- Fix: a newly observed Tichu declaration was only rendered on the following scan; the HUD now resolves the action context before painting.
-- Fix: hand-only trade detection required `#tradingContainer`, so builds exposing `#trading` never used that fallback.
-- Fix: the “your turn” check no longer relies on the non-existent `document.getById`.
-- Fix: manual marks, persisted layout and diagnostics no longer depend on a HUD that DoD may have detached.
-- Add: click-to-mark manual played overrides with a reversible undo history.
-- Add: unseen-copies-by-rank counter and Mahjong-wish highlighting.
-- Add: Tichu vs Grand Tichu call tracking, shown in the panel and used by the Dragon adviser.
-- Add: diagnostics snapshot button and keyboard shortcuts.
-- Add: persisted panel position, size and collapsed state.
-- Add: Node test suite and CI workflows.
+- Manual played overrides with reversible undo.
+- Unseen-copies-by-rank counter and wish highlighting.
+- Tichu vs Grand Tichu call tracking.
+- Diagnostics snapshot and keyboard shortcuts.
+- Persisted panel position, size and collapsed state.
+- Node test suite and CI workflows.
+- Fixes for the action-context paint order, the `#trading` fallback and the non-existent `document.getById`.
 
 ### 1.4.1
 

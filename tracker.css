@@ -1,10 +1,27 @@
+/* Tichu Tracker 2.0 — compact three-tab HUD */
+
 #tichu-tracker-hud {
+  --tt-bg: #0f141b;
+  --tt-bg-2: #151d28;
+  --tt-bg-3: #1c2634;
+  --tt-line: #2a3646;
+  --tt-line-soft: #222d3b;
+  --tt-text: #dce5f1;
+  --tt-muted: #8296ad;
+  --tt-dim: #5d6f85;
+  --tt-blue: #60a5fa;
+  --tt-blue-bg: #1e3a5f;
+  --tt-green: #34d399;
+  --tt-gold: #fbbf24;
+  --tt-gold-bg: #3a2c12;
+  --tt-red: #f87171;
+
   position: fixed;
   top: 16px;
   right: 16px;
-  width: 390px;
-  min-width: 280px;
-  min-height: 120px;
+  width: 372px;
+  min-width: 300px;
+  min-height: 150px;
   max-width: calc(100vw - 24px);
   max-height: calc(100vh - 32px);
   display: flex;
@@ -12,297 +29,438 @@
   overflow: hidden;
   resize: both;
   box-sizing: border-box;
-  background-color: rgba(18, 22, 28, 0.96);
-  border: 1px solid #3a4454;
-  border-radius: 6px;
-  color: #e2e8f0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--tt-bg);
+  border: 1px solid var(--tt-line);
+  border-radius: 9px;
+  color: var(--tt-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 11px;
   line-height: 1.35;
   z-index: 2147483647;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
   user-select: none;
 }
 
 #tichu-tracker-hud *,
 #tichu-tracker-hud *::before,
-#tichu-tracker-hud *::after {
-  box-sizing: border-box;
-}
+#tichu-tracker-hud *::after { box-sizing: border-box; }
+#tichu-tracker-hud [hidden] { display: none !important; }
+
+#tichu-tracker-hud[data-collapsed="true"] { min-height: 0; }
+#tichu-tracker-hud[data-collapsed="true"] .tt-tabs { display: none !important; }
 
 #tichu-tracker-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  background-color: #1e2631;
-  border-bottom: 1px solid #3a4454;
-  border-radius: 6px 6px 0 0;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  background: linear-gradient(180deg, #1a2431, #151d28);
+  border-bottom: 1px solid var(--tt-line);
   cursor: grab;
   touch-action: none;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  flex-shrink: 0;
 }
 #tichu-tracker-header:active { cursor: grabbing; }
+.tt-brand { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; }
+.tt-brand-name {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  color: #f3f7fd;
+}
+.tt-version {
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--tt-dim);
+  letter-spacing: 0;
+}
 
-.tt-controls { display: flex; gap: 4px; flex-shrink: 0; }
-
-.tt-btn {
-  background: #2d3748;
-  color: #e2e8f0;
-  border: 1px solid #4a5568;
-  border-radius: 3px;
+.tt-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-left: auto;
   padding: 2px 6px;
-  font: inherit;
+  border: 1px solid var(--tt-line-soft);
+  border-radius: 999px;
+  background: #0c1118;
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--tt-muted);
+  overflow: hidden;
+}
+.tt-sync-text {
+  max-width: 118px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tt-sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--tt-dim); flex: 0 0 auto; }
+.tt-sync-live .tt-sync-dot { background: var(--tt-green); box-shadow: 0 0 6px rgba(52, 211, 153, 0.75); }
+.tt-sync-live .tt-sync-text { color: #9ff0cb; }
+.tt-sync-ok .tt-sync-dot { background: var(--tt-green); }
+.tt-sync-ok .tt-sync-text { color: #9ff0cb; }
+.tt-sync-warn .tt-sync-dot { background: var(--tt-gold); }
+.tt-sync-warn .tt-sync-text { color: var(--tt-gold); }
+.tt-sync-paused .tt-sync-dot { background: var(--tt-gold); }
+.tt-sync-paused .tt-sync-text { color: var(--tt-gold); }
+.tt-sync-waiting .tt-sync-dot { background: var(--tt-blue); }
+.tt-sync-error .tt-sync-dot { background: var(--tt-red); }
+.tt-sync-error .tt-sync-text { color: var(--tt-red); }
+
+.tt-controls { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+.tt-btn {
+  min-width: 22px;
+  height: 21px;
+  padding: 0 5px;
+  background: #222d3b;
+  color: var(--tt-text);
+  border: 1px solid #334155;
+  border-radius: 4px;
+  font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
   cursor: pointer;
 }
-.tt-btn:hover { background: #4a5568; }
-#tichu-tracker-hud button:focus-visible {
-  outline: 2px solid #90cdf4;
+.tt-btn:hover { background: #2d3a4c; border-color: #475569; }
+.tt-btn:active { transform: translateY(1px); }
+.tt-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.tt-btn-icon { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+#tichu-tracker-hud button:focus-visible,
+#tichu-tracker-hud [role="button"]:focus-visible {
+  outline: 2px solid var(--tt-blue);
   outline-offset: 1px;
 }
 
+#tichu-tracker-hud .tt-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  background: #111821;
+  border-bottom: 1px solid var(--tt-line);
+}
+.tt-tab {
+  flex: 1;
+  height: 27px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--tt-muted);
+  font: 700 10.5px/1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.tt-tab:hover { color: var(--tt-text); background: rgba(255, 255, 255, 0.03); }
+.tt-tab-active { color: #eaf2ff; border-bottom-color: var(--tt-blue); background: rgba(96, 165, 250, 0.08); }
+
 #tichu-tracker-body {
-  padding: 8px 10px 9px;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  padding: 9px;
   scrollbar-width: thin;
-  scrollbar-color: #4a5568 #1e2631;
+  scrollbar-color: #3a4a5f #111821;
 }
+#tichu-tracker-body::-webkit-scrollbar { width: 8px; }
+#tichu-tracker-body::-webkit-scrollbar-thumb { background: #3a4a5f; border-radius: 8px; }
+#tichu-tracker-body::-webkit-scrollbar-track { background: #111821; }
 
-.tt-suit-row {
-  display: flex;
-  align-items: center;
-  margin-bottom: 4px;
-  gap: 3px;
-}
-.tt-suit-label { width: 18px; flex: 0 0 18px; font-weight: bold; text-align: center; }
-.tt-suit-s { color: #cbd5e0; }
-.tt-suit-h { color: #fc8181; }
-.tt-suit-d { color: #63b3ed; }
-.tt-suit-c { color: #68d391; }
+/* ---- Play tab ----------------------------------------------------------- */
 
-.tt-card-cell {
-  flex: 1;
-  text-align: center;
-  padding: 3px 0;
-  border-radius: 3px;
-  font-weight: bold;
-  background-color: #2d3748;
-  color: #f7fafc;
-  border: 1px solid transparent;
-  transition: opacity 0.15s ease;
+.tt-callout {
+  padding: 9px 10px 8px;
+  border: 1px solid #2c3c50;
+  border-radius: 8px;
+  background:
+    radial-gradient(120% 160% at 0% 0%, rgba(96, 165, 250, 0.14), transparent 58%),
+    linear-gradient(160deg, #182330, #121a24);
 }
-
-#tichu-tracker-specials {
-  display: flex;
-  gap: 4px;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid #2d3748;
-}
-.tt-special-cell {
-  flex: 1;
-  text-align: center;
-  padding: 4px 2px;
-  border-radius: 3px;
-  border: 1px solid transparent;
-  font-weight: bold;
-  font-size: 10px;
-  transition: opacity 0.15s ease;
-}
-
-.tt-state-unknown { background-color: #2d3748; color: #ffffff; }
-.tt-state-hand { background-color: #2b6cb0; color: #ffffff; border-color: #63b3ed; }
-.tt-state-traded { background-color: #744210; color: #fbd38d; border-color: #d69e2e; }
-.tt-state-unresolved {
-  background-color: #3b2f1a;
-  color: #fbd38d;
-  border-color: #d69e2e;
-  border-style: dashed;
-}
-.tt-state-played {
-  background-color: #1a202c;
-  color: #778399;
-  text-decoration: line-through;
-  opacity: 0.52;
-}
-
-#tichu-tracker-meta {
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid #2d3748;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: #cbd5e0;
-}
-.tt-meta-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-.tt-meta-row > span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.tt-status-row { justify-content: flex-start; font-size: 10px; }
-.tt-status-ok { color: #9ae6b4; }
-.tt-status-warn { color: #fbd38d; }
-.tt-status-error { color: #feb2b2; font-weight: 800; }
-.tt-wish-label { color: #fc8181; text-align: right; }
-.tt-trade-row { justify-content: flex-start; }
-#tichu-tracker-meta .tt-trade-row span { color: #fbd38d; overflow-wrap: anywhere; }
-.tt-unmapped-label { color: #f6ad55; overflow-wrap: anywhere; }
-
-#tichu-tracker-advice,
-#tichu-tracker-probabilities,
-#tichu-tracker-declarations,
-#tichu-tracker-dragon-advice {
-  margin-top: 8px;
-  padding-top: 7px;
-  border-top: 1px solid #2d3748;
-}
-.tt-section-title {
-  margin-bottom: 5px;
-  color: #a0aec0;
-  font-size: 10px;
+.tt-action-kind {
+  font-size: 9px;
   font-weight: 800;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: var(--tt-blue);
 }
-.tt-advice-title { font-weight: 800; color: #f7fafc; overflow-wrap: anywhere; }
-.tt-advice-good { color: #9ae6b4; }
-.tt-advice-warn { color: #fbd38d; }
-.tt-advice-neutral { color: #e2e8f0; }
-.tt-advice-details {
-  margin-top: 4px;
-  color: #cbd5e0;
-  font-size: 10px;
-  line-height: 1.45;
+.tt-action-kind.tt-tone-good { color: var(--tt-green); }
+.tt-action-kind.tt-tone-warn { color: var(--tt-gold); }
+.tt-action-kind.tt-tone-neutral { color: var(--tt-blue); }
+.tt-action-cards { margin-top: 2px; }
+.tt-action-cards-value {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: #f7fbff;
   overflow-wrap: anywhere;
 }
-.tt-probability-note {
-  margin-bottom: 5px;
-  color: #718096;
-  font-size: 9px;
-  line-height: 1.4;
-}
-.tt-probability-rows { display: flex; flex-direction: column; gap: 4px; }
-.tt-prob-row { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 6px; align-items: start; }
-.tt-prob-seat { color: #cbd5e0; font-weight: 700; }
-.tt-prob-value { color: #a0aec0; overflow-wrap: anywhere; }
-.tt-prob-self .tt-prob-value { color: #90cdf4; }
-.tt-prob-partner .tt-prob-seat { color: #68d391; }
+.tt-action-sub { margin-top: 3px; font-size: 10px; color: #a9bbcf; overflow-wrap: anywhere; }
 
-.tt-legend {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 7px;
-  padding-top: 5px;
-  border-top: 1px dashed #2d3748;
-  font-size: 9px;
-  color: #718096;
+.tt-reason {
+  margin: 8px 1px 0;
+  color: #c4d2e2;
+  font-size: 10.5px;
+  line-height: 1.45;
+  user-select: text;
 }
 
-@media (max-width: 480px) {
-  #tichu-tracker-hud {
-    right: 8px;
-    top: 8px;
-    width: calc(100vw - 16px);
-    max-width: none;
-    resize: vertical;
-    min-width: 0;
-  }
-}
-
-/* --- 1.5.0 additions ------------------------------------------------------ */
-
-.tt-title {
+.tt-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.tt-chip {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  overflow: hidden;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--tt-line);
+  border-radius: 999px;
+  background: #131c27;
+  font-size: 9px;
   white-space: nowrap;
 }
-.tt-version {
-  color: #718096;
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0;
+.tt-chip-label { color: var(--tt-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.tt-chip-value { color: #dfeaf8; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tt-chip-good { border-color: rgba(52, 211, 153, 0.35); background: rgba(52, 211, 153, 0.08); }
+.tt-chip-good .tt-chip-value { color: #9ff0cb; }
+.tt-chip-warn { border-color: rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.09); }
+.tt-chip-warn .tt-chip-value { color: #ffd772; }
+
+.tt-alerts { display: flex; flex-direction: column; gap: 3px; margin-top: 7px; }
+.tt-alert {
+  padding: 4px 7px;
+  border-left: 2px solid var(--tt-line);
+  border-radius: 3px;
+  background: #131b25;
+  color: #b9c8da;
+  font-size: 9.5px;
+  line-height: 1.35;
 }
-.tt-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.tt-alert-warn { border-left-color: var(--tt-gold); color: #f4d58b; background: rgba(251, 191, 36, 0.06); }
+.tt-alert-good { border-left-color: var(--tt-green); color: #a9eccd; background: rgba(52, 211, 153, 0.06); }
+.tt-alert-neutral { border-left-color: var(--tt-blue); }
+
+.tt-more { margin-top: 8px; border-top: 1px solid var(--tt-line-soft); padding-top: 6px; }
+.tt-more-summary {
+  cursor: pointer;
+  color: var(--tt-muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  list-style: none;
+}
+.tt-more-summary::-webkit-details-marker { display: none; }
+.tt-more-summary:focus-visible { outline: 2px solid var(--tt-blue); outline-offset: 2px; border-radius: 2px; }
+.tt-more-summary::before { content: "▸ "; color: var(--tt-dim); }
+.tt-more[open] .tt-more-summary::before { content: "▾ "; }
+.tt-more-body {
+  margin-top: 5px;
+  color: #aebed0;
+  font-size: 9.5px;
+  line-height: 1.5;
+  user-select: text;
 }
 
-/* Card cells double as manual overrides: click marks a card as played. */
-.tt-card-cell,
+/* ---- Cards tab ---------------------------------------------------------- */
+
+.tt-grid { display: flex; flex-direction: column; gap: 3px; }
+.tt-suit-row { display: flex; align-items: center; gap: 2px; }
+.tt-suit-label {
+  flex: 0 0 15px;
+  width: 15px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+}
+.tt-suit-s { color: #dbe4f1; }
+.tt-suit-h { color: #fb7185; }
+.tt-suit-d { color: #60a5fa; }
+.tt-suit-c { color: #34d399; }
+
+.tt-card-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 19px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: #1b2533;
+  color: #c9d6e6;
+  font-size: 9.5px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+}
+.tt-card-cell:hover, .tt-special-cell:hover { filter: brightness(1.3); }
+
+.tt-st-unknown { background: #1b2533; color: #b7c6d9; }
+.tt-st-hand {
+  background: var(--tt-blue-bg);
+  border-color: rgba(96, 165, 250, 0.55);
+  color: #eaf4ff;
+}
+.tt-st-traded {
+  background: var(--tt-gold-bg);
+  border-color: rgba(251, 191, 36, 0.5);
+  color: #ffe2a3;
+}
+.tt-st-unresolved {
+  background: #2a2415;
+  border-color: rgba(251, 191, 36, 0.65);
+  border-style: dashed;
+  color: #ffd772;
+}
+.tt-st-played {
+  background: #0e141c;
+  border-color: #161f2a;
+  color: #4e6076;
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+.tt-manual { box-shadow: inset 0 0 0 2px #f6ad55; }
+.tt-wish-card { outline: 2px solid #fbbf24; outline-offset: -2px; }
+
+.tt-specials {
+  display: flex;
+  gap: 4px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--tt-line-soft);
+}
 .tt-special-cell {
+  flex: 1 1 0;
+  height: 23px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: #1b2533;
+  color: #c9d6e6;
+  font-size: 9px;
+  font-weight: 700;
   cursor: pointer;
   user-select: none;
 }
-.tt-card-cell:hover,
-.tt-special-cell:hover { filter: brightness(1.25); }
-.tt-card-cell:focus-visible,
-.tt-special-cell:focus-visible {
-  outline: 2px solid #90cdf4;
-  outline-offset: 1px;
-}
-/* A manual mark is drawn with an inset ring so it stays visible on the dim
-   "played" background and can never be mistaken for DOM-detected evidence. */
-.tt-manual {
-  box-shadow: inset 0 0 0 2px #f6ad55;
-}
-/* The active Mahjong wish highlights every copy of the wished rank. */
-.tt-wish-card {
-  outline: 2px solid #f6ad55;
-  outline-offset: -2px;
-}
 
-#tichu-tracker-unseen {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 3px 2px;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid #2d3748;
+.tt-unseen {
+  display: grid;
+  grid-template-columns: repeat(13, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 2px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--tt-line-soft);
 }
 .tt-unseen-title {
-  flex: 1 0 100%;
-  color: #718096;
+  grid-column: 1 / -1;
+  margin-bottom: 1px;
   font-size: 8px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
+  color: var(--tt-dim);
 }
-.tt-unseen-cell {
-  flex: 1 1 0;
-  min-width: 0;
+.tt-unseen-chip {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
+  gap: 0;
   padding: 1px 0 2px;
   border-radius: 3px;
-  background-color: #232b36;
+  background: #172130;
   font-variant-numeric: tabular-nums;
 }
-.tt-unseen-rank {
-  color: #718096;
-  font-size: 7px;
-  line-height: 1;
+.tt-unseen-rank { font-size: 7.5px; line-height: 1.1; color: var(--tt-dim); }
+.tt-unseen-count { font-size: 9.5px; line-height: 1.1; font-weight: 800; color: #dbe6f5; }
+.tt-unseen-empty { opacity: 0.35; }
+.tt-unseen-empty .tt-unseen-count { color: #46586c; }
+
+.tt-hand-meta {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--tt-line-soft);
+  color: #b9c8da;
+  font-size: 9px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
-.tt-unseen-count {
-  color: #e2e8f0;
-  font-size: 10px;
+.tt-legend {
+  margin-top: 5px;
+  color: var(--tt-dim);
+  font-size: 8.5px;
+  line-height: 1.35;
+}
+
+/* ---- Odds tab ----------------------------------------------------------- */
+
+.tt-odds {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+.tt-odds th, .tt-odds td {
+  padding: 3px 2px;
+  text-align: right;
+  border-bottom: 1px solid var(--tt-line-soft);
+  white-space: nowrap;
+}
+.tt-odds thead th {
+  color: var(--tt-dim);
+  font-size: 8px;
   font-weight: 700;
-  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom-color: var(--tt-line);
 }
-.tt-unseen-empty { opacity: 0.38; }
-.tt-unseen-empty .tt-unseen-count { color: #4a5568; }
+.tt-odds tbody th {
+  text-align: left;
+  color: #cfdced;
+  font-weight: 700;
+}
+.tt-odds tbody td { color: #a9bbcf; }
+.tt-odds tbody td:nth-child(2) { color: #e6eef9; font-weight: 700; }
+.tt-odds-partner th { color: var(--tt-green) !important; }
+.tt-odds tbody tr:last-child th,
+.tt-odds tbody tr:last-child td { border-bottom: 0; }
+
+.tt-plan {
+  margin-top: 8px;
+  padding: 6px 7px;
+  border: 1px solid var(--tt-line-soft);
+  border-radius: 5px;
+  background: #131c27;
+  color: #cfdced;
+  font-size: 9.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.tt-sim {
+  margin-top: 6px;
+  color: #a9eccd;
+  font-size: 9.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.tt-model-note {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--tt-line-soft);
+  color: var(--tt-dim);
+  font-size: 8.5px;
+  line-height: 1.4;
+}
+.tt-model-warn { color: #f4d58b; }
+
+@media (max-width: 480px) {
+  #tichu-tracker-hud {
+    top: 8px;
+    right: 8px;
+    width: calc(100vw - 16px);
+    max-width: none;
+    min-width: 0;
+    resize: vertical;
+  }
+}

@@ -1,19 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Tichu Tracker",
-  "version": "1.5.0",
-  "description": "A tichu card tracker meant for www.dod.gr",
+  "version": "2.0.0",
+  "description": "Live card tracking, hidden-hand odds and a compact move advisor for Tichu on www.dod.gr",
   "icons": {
     "16": "icons/logo-16.png",
     "32": "icons/logo-32.png",
     "48": "icons/logo-48.png",
     "96": "icons/logo-96.png"
-  },
-  "action": {
-    "default_icon": {
-      "16": "icons/logo-16.png",
-      "32": "icons/logo-32.png"
-    }
   },
   "content_scripts": [
     {
@@ -24,6 +18,8 @@
         "tracker.css"
       ],
       "js": [
+        "src/core.js",
+        "src/probability.js",
         "tracker.js"
       ],
       "run_at": "document_idle",
